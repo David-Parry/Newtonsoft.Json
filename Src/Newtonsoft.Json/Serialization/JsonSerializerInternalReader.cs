@@ -1696,19 +1696,58 @@ namespace Newtonsoft.Json.Serialization
                                 break;
                             case JsonToken.Comment:
                                 break;
+                            case JsonToken.StartObject:
+                                // Check for $type metadata to handle TypeNameHandling.All for collection elements
+                                if (Serializer._typeNameHandling != TypeNameHandling.None)
+                                {
+                                    // Save position to restore if needed
+                                    if (reader is JTokenReader tokenReader)
+                                    {
+                                        JObject obj = (JObject)tokenReader.CurrentToken!;
+                                        JToken? typeToken;
+                                        if (obj.TryGetValue(JsonTypeReflector.TypePropertyName, StringComparison.Ordinal, out typeToken))
+                                        {
+                                            string? typeName = (string?)typeToken;
+                                            if (!string.IsNullOrEmpty(typeName))
+                                            {
+                                                Type? specificType = null;
+                                                try
+                                                {
+                                                    StructMultiKey<string?, string> typeNameKey = ReflectionUtils.SplitFullyQualifiedTypeName(typeName);
+                                                    specificType = Serializer._serializationBinder.BindToType(typeNameKey.Value1, typeNameKey.Value2);
+                                                }
+                                                catch (Exception)
+                                                {
+                                                    // Ignore binding errors here - will be caught later if needed
+                                                }
+
+                                                // If we found a concrete type that's not a collection, deserialize directly to avoid wrapping
+                                                if (specificType != null && 
+                                                    !typeof(IEnumerable).IsAssignableFrom(specificType) && 
+                                                    specificType != typeof(string))
+                                                {
+                                                    object? value = Serializer.Deserialize(reader, specificType);
+                                                    list.Add(value);
+                                                    continue;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                goto default;
                             default:
-                                object? value;
+                                object? elementValue;
 
                                 if (collectionItemConverter != null && collectionItemConverter.CanRead)
                                 {
-                                    value = DeserializeConvertable(collectionItemConverter, reader, contract.CollectionItemType, null);
+                                    elementValue = DeserializeConvertable(collectionItemConverter, reader, contract.CollectionItemType, null);
                                 }
                                 else
                                 {
-                                    value = CreateValueInternal(reader, contract.CollectionItemType, contract.ItemContract, null, contract, containerProperty, null);
+                                    elementValue = CreateValueInternal(reader, contract.CollectionItemType, contract.ItemContract, null, contract, containerProperty, null);
                                 }
 
-                                list.Add(value);
+                                list.Add(elementValue);
                                 break;
                         }
                     }
